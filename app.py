@@ -1,21 +1,14 @@
-
 import streamlit as st
 import pandas as pd
-import joblib, importlib
+import joblib
 from pathlib import Path
-import joblib, streamlit as st
 
-BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "best_model_pipe.pkl"   # 和你实际文件名一致
-
-st.write("📄 Loading:", str(MODEL_PATH))
-model = joblib.load(MODEL_PATH)
-st.write("🧠 Type:", type(model).__name__)
-assert hasattr(model, "predict"), "Loaded object is not a model/Pipeline"
-
+# ---- 放最顶：页面配置 ----
 st.set_page_config(page_title="心脏病预测 · Streamlit", page_icon="❤️", layout="centered")
 st.title("❤️ 心脏病预测（Streamlit 版）")
+st.caption("建议：统一使用列名 **thalch**（最大心率）。本应用优先加载仓库根目录下的模型文件。")
 
+# ---- ① 加载模型（只保留这一套逻辑：候选文件 -> 上传兜底） ----
 BASE_DIR = Path(__file__).resolve().parent
 CANDIDATES = [BASE_DIR / "best_model_pipe.pkl", BASE_DIR / "best_model.pkl"]
 
@@ -26,10 +19,9 @@ def try_load(path: Path):
         obj = joblib.load(path)
         return obj, None
     except Exception as e:
-        return None, e
+        return None, e  # 不崩溃，交给 UI 展示
 
-loaded, err = None, None
-src = None
+loaded, err, src = None, None, None
 for p in CANDIDATES:
     if p.exists():
         loaded, err = try_load(p)
@@ -59,29 +51,35 @@ if not hasattr(loaded, "predict"):
 
 model = loaded
 
-# 后续同原版...
+# ---- ② 定义输入特征 ----
 st.subheader("② 定义输入特征")
 feature_names = list(getattr(model, "feature_names_in_", []))
 csv_df = None
 if not feature_names:
-    st.info("模型未提供 feature_names_in_。请上传示例 CSV 用于构建表单。")
-    csv_up = st.file_uploader("上传示例 CSV", type=["csv"], key="csv_schema")
+    st.info("模型未提供 feature_names_in_。请上传一个示例 CSV 用于构建表单。")
+    csv_up = st.file_uploader("上传示例 CSV（列名将用于生成输入表单）", type=["csv"], key="csv_schema")
     if csv_up:
-        csv_df = pd.read_csv(csv_up)
-        feature_names = list(csv_df.columns)
+        try:
+            csv_df = pd.read_csv(csv_up)
+            feature_names = list(csv_df.columns)
+        except Exception as e:
+            st.error(f"CSV 读取失败：{e}")
 
 if not feature_names:
-    st.error("无法确定特征名。请提供带 feature_names_in_ 的模型或示例 CSV。")
+    st.error("无法确定特征名。请：1）使用带 feature_names_in_ 的模型导出；或 2）提供包含完整列名的 CSV。")
     st.stop()
 
+# ---- ③ 构建输入表单 ----
 st.subheader("③ 填写特征值")
 st.sidebar.header("填写特征")
+
 def build_default(s: pd.Series):
     if s is None or s.empty:
         return 0
     if pd.api.types.is_numeric_dtype(s):
         return float(s.median())
-    return s.mode().iloc[0] if not s.mode().empty else ""
+    m = s.mode()
+    return (m.iloc[0] if not m.empty else "")
 
 schema_df = csv_df
 def widget_for(c):
@@ -103,8 +101,10 @@ def widget_for(c):
 
 inputs = {c: widget_for(c) for c in feature_names}
 X = pd.DataFrame([inputs], columns=feature_names)
+st.markdown("**你的输入**")
 st.dataframe(X, use_container_width=True)
 
+# ---- ④ 预测 ----
 st.subheader("④ 预测")
 if st.sidebar.button("开始预测", type="primary", use_container_width=True):
     try:
@@ -112,7 +112,11 @@ if st.sidebar.button("开始预测", type="primary", use_container_width=True):
         st.success(f"预测类别：**{y[0]}**")
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X)
-            st.info(f"阳性概率：**{proba[0,-1]:.3f}**")
+            if proba.shape[1] == 2:
+                st.info(f"阳性概率：**{proba[0,1]:.3f}**；阴性概率：{proba[0,0]:.3f}")
+            else:
+                st.write("各类别概率：")
+                st.dataframe(pd.Series(proba[0]).to_frame("probability"))
     except Exception as e:
         st.error(f"预测失败：{e}")
         st.caption("通常是列名或类型与训练不一致；请统一使用 thalch 作为最大心率列名。")
