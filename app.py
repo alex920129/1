@@ -3,6 +3,15 @@ import streamlit as st
 import pandas as pd
 import joblib, importlib
 from pathlib import Path
+import joblib, streamlit as st
+
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_PATH = BASE_DIR / "best_model_pipe.pkl"   # 和你实际文件名一致
+
+st.write("📄 Loading:", str(MODEL_PATH))
+model = joblib.load(MODEL_PATH)
+st.write("🧠 Type:", type(model).__name__)
+assert hasattr(model, "predict"), "Loaded object is not a model/Pipeline"
 
 st.set_page_config(page_title="心脏病预测 · Streamlit", page_icon="❤️", layout="centered")
 st.title("❤️ 心脏病预测（Streamlit 版）")
